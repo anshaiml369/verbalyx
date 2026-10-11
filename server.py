@@ -1,5 +1,5 @@
 """
-HTTP API + static frontend for the AI Video Assistant.
+HTTP API + static frontend for Verbalyx.
 
 Replaces the Streamlit UI (app.py). It calls the existing pipeline functions
 unchanged and in the same order as app.py / main.run_pipeline:
@@ -188,7 +188,7 @@ def _retrieved_passages(chain, question, transcript):
     ]
 
 
-app = FastAPI(title="AI Video Assistant API", description="Transcription, LLM analysis and RAG Q&A over a video's audio")
+app = FastAPI(title="Verbalyx API", description="Transcription, LLM analysis and RAG Q&A over a video's audio")
 
 
 @app.get("/api/health")

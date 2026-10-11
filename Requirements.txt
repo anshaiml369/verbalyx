@@ -1,4 +1,4 @@
-# ── AI Meeting Assistant ── requirements.txt ──────────────────────────────────
+# ── Verbalyx ── requirements.txt ──────────────────────────────────
 # Python >= 3.10 recommended
 
 # ── Audio / Video acquisition ─────────────────────────────────────────────────

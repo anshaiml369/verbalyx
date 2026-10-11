@@ -9,7 +9,7 @@ from core.rag_engine import build_rag_chain, ask_question
 load_dotenv()
 
 def run_pipeline(source :str, language :str = "english") -> dict:
-    print("starting AI Video Assistant")
+    print("starting Verbalyx")
 
     chunks = process_input(source)
 

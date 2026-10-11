@@ -1,4 +1,4 @@
-# AI Video Assistant — transcribe, analyse and question spoken content
+# Verbalyx — transcribe, analyse and question spoken content
 
 A portfolio project that began from a YouTube tutorial and was extended with a web studio (replacing the original Streamlit UI), display of the retrieved evidence behind each answer, a fix for cross-video retrieval contamination and documented limitations. Given a YouTube link or an uploaded audio/video file, the assistant:
 

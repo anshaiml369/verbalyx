@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Video Assistant — Transcribe, Analyse, Ask</title>
+  <meta name="description" content="Media-research studio: transcribes the speech in a YouTube video or uploaded file, summarises it with an LLM, and answers questions using retrieval over the transcript. Tutorial-based portfolio project, extended with a research interface and evaluation.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=Fraunces:opsz,wght@9..144,500;9..144,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/core.css">
+  <link rel="stylesheet" href="/css/app.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23161412'/%3E%3Cpath d='M12 10v12l10-6z' fill='%23d9643a'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="app-header">
+  <div class="container wide">
+    <a class="brand" href="#top" aria-label="AI Video Assistant, top of page">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#161412"/><path d="M12 10v12l10-6z" fill="currentColor"/></svg>
+      <span>
+        <span class="brand-name">AI Video Assistant</span>
+        <span class="brand-sub">Speech → transcript → analysis → retrieval Q&amp;A</span>
+      </span>
+    </a>
+    <button class="nav-toggle" aria-expanded="false" aria-controls="site-nav" aria-label="Open navigation">
+      <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path d="M2 4h14M2 9h14M2 14h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
+    <nav class="header-nav" id="site-nav" aria-label="Sections">
+      <a href="#studio">Studio</a>
+      <a href="#ask">Ask</a>
+      <a href="#method">How it works</a>
+    </nav>
+    <span class="status header-status" id="api-status" data-state="busy"><span class="status-dot"></span><span class="status-text">Connecting…</span></span>
+  </div>
+</header>
+
+<main id="main">
+  <div class="container wide" id="top">
+    <section class="page-intro compact">
+      <p class="eyebrow">Speech recognition · LLM summarisation · retrieval-augmented generation</p>
+      <h1 class="page-title">Analyse what is said in a video, then question it</h1>
+      <p class="page-lede">The assistant extracts the audio track of a YouTube video or an uploaded file, transcribes it (Whisper, or Sarvam for Hinglish), asks Mistral for a title, summary, action items, decisions and open questions, and indexes the transcript so you can ask questions answered from retrieved passages. It analyses speech only, not the images in the video.</p>
+    </section>
+  </div>
+
+  <div class="container wide" id="studio">
+    <div class="studio">
+      <!-- Source -->
+      <aside class="studio-left">
+        <form class="panel" id="source-form" novalidate>
+          <div class="panel-head"><h2 class="panel-title">Source</h2></div>
+          <div class="panel-body stack">
+            <div class="segmented full" role="group" aria-label="Source type">
+              <button type="button" data-source="url" aria-pressed="true">YouTube link</button>
+              <button type="button" data-source="file" aria-pressed="false">Upload file</button>
+            </div>
+            <div class="field" id="url-field">
+              <label class="field-label" for="url-input">YouTube URL</label>
+              <input class="input" id="url-input" type="url" inputmode="url" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off" aria-describedby="url-error">
+              <span class="field-error" id="url-error" role="alert"></span>
+            </div>
+            <div class="field" id="file-field" hidden>
+              <span class="field-label">Media file</span>
+              <label class="dropzone" id="dropzone" for="file-input">
+                <input type="file" id="file-input" accept="video/*,audio/*,.mkv,.m4a,.flac" class="sr-only" aria-describedby="file-hint file-error">
+                <strong id="file-name">Choose or drop a file</strong>
+                <span class="hint" id="file-hint">MP4, MOV, MKV, WebM, MP3, WAV, M4A … up to <span id="max-mb">500</span> MB</span>
+              </label>
+              <span class="field-error" id="file-error" role="alert"></span>
+            </div>
+            <div class="field">
+              <label class="field-label" for="language">Spoken language</label>
+              <select class="select" id="language">
+                <option value="english">English — Whisper (runs locally)</option>
+                <option value="hinglish">Hinglish — Sarvam API, translated to English</option>
+              </select>
+            </div>
+            <button class="btn btn-primary btn-lg btn-block" type="submit" id="analyse-btn"><span class="spinner" aria-hidden="true"></span><span class="btn-label">Analyse</span></button>
+            <div id="source-alert"></div>
+          </div>
+        </form>
+        <div class="panel">
+          <div class="panel-head"><h2 class="panel-title">Server requirements</h2></div>
+          <div class="panel-body"><ul class="req-list" id="req-list"><li class="hint">Checking…</li></ul></div>
+        </div>
+      </aside>
+
+      <!-- Media + pipeline -->
+      <section class="studio-main" aria-label="Media and processing">
+        <div class="stage" id="media-stage">
+          <div class="stage-empty" id="stage-empty">
+            <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="6" y="10" width="36" height="28" rx="3"/><path d="M20 18v12l10-6z" fill="currentColor"/></svg>
+            <span>Preview appears here once you add a link or file</span>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head">
+            <div class="min0"><h2 class="panel-title">Processing</h2><p class="panel-sub" id="job-sub">Idle</p></div>
+            <span class="badge" id="job-badge">idle</span>
+          </div>
+          <div class="panel-body">
+            <ol class="steps" id="steps">
+              <li data-stage="audio" data-state="pending"><span class="dot"></span><span class="s-name">Audio</span><span class="s-desc">download / convert, 10-min chunks</span><span class="s-time mono">—</span></li>
+              <li data-stage="transcript" data-state="pending"><span class="dot"></span><span class="s-name">Transcribe</span><span class="s-desc">Whisper or Sarvam</span><span class="s-time mono">—</span></li>
+              <li data-stage="title" data-state="pending"><span class="dot"></span><span class="s-name">Title</span><span class="s-desc">first 2,000 chars</span><span class="s-time mono">—</span></li>
+              <li data-stage="summary" data-state="pending"><span class="dot"></span><span class="s-name">Summary</span><span class="s-desc">map-reduce over chunks</span><span class="s-time mono">—</span></li>
+              <li data-stage="extract" data-state="pending"><span class="dot"></span><span class="s-name">Extract</span><span class="s-desc">actions, decisions, questions</span><span class="s-time mono">—</span></li>
+              <li data-stage="rag" data-state="pending"><span class="dot"></span><span class="s-name">Index</span><span class="s-desc">embed + store for Q&amp;A</span><span class="s-time mono">—</span></li>
+            </ol>
+            <div class="progress" id="job-progress" hidden></div>
+            <div id="job-alert"></div>
+            <details class="disclosure log-wrap">
+              <summary>Server log for this job</summary>
+              <div class="disclosure-body"><pre class="code" id="job-log">No job yet.</pre></div>
+            </details>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Analysis -->
+    <section class="panel analysis" id="analysis" aria-labelledby="analysis-title">
+      <div class="panel-head">
+        <div class="min0">
+          <p class="eyebrow">Generated title</p>
+          <h2 class="analysis-title" id="analysis-title">No analysis yet</h2>
+        </div>
+        <span class="provenance">LLM output · <span class="llm-model">mistral-small-latest</span></span>
+      </div>
+      <div class="tabs" role="tablist" aria-label="Analysis outputs">
+        <button class="tab" role="tab" id="t-summary" aria-controls="p-summary" aria-selected="true">Summary</button>
+        <button class="tab" role="tab" id="t-actions" aria-controls="p-actions" aria-selected="false">Action items</button>
+        <button class="tab" role="tab" id="t-decisions" aria-controls="p-decisions" aria-selected="false">Decisions</button>
+        <button class="tab" role="tab" id="t-questions" aria-controls="p-questions" aria-selected="false">Open questions</button>
+        <button class="tab" role="tab" id="t-transcript" aria-controls="p-transcript" aria-selected="false">Transcript<span class="count" id="transcript-count"></span></button>
+      </div>
+      <div class="tab-panel" role="tabpanel" id="p-summary" aria-labelledby="t-summary" tabindex="0"><div class="panel-body prose" data-out="summary"><p class="muted">The summary appears here as soon as that stage finishes.</p></div></div>
+      <div class="tab-panel" role="tabpanel" id="p-actions" aria-labelledby="t-actions" tabindex="0" hidden><div class="panel-body prose" data-out="action_items"><p class="muted">Not generated yet.</p></div></div>
+      <div class="tab-panel" role="tabpanel" id="p-decisions" aria-labelledby="t-decisions" tabindex="0" hidden><div class="panel-body prose" data-out="key_decisions"><p class="muted">Not generated yet.</p></div></div>
+      <div class="tab-panel" role="tabpanel" id="p-questions" aria-labelledby="t-questions" tabindex="0" hidden><div class="panel-body prose" data-out="open_questions"><p class="muted">Not generated yet.</p></div></div>
+      <div class="tab-panel" role="tabpanel" id="p-transcript" aria-labelledby="t-transcript" tabindex="0" hidden>
+        <div class="panel-body stack-sm">
+          <div class="row-between"><p class="hint">Plain text from the speech-to-text step. The pipeline does not keep timestamps or speaker labels.</p><div class="row"><button class="btn btn-sm" type="button" id="copy-transcript" disabled>Copy</button><button class="btn btn-sm" type="button" id="download-transcript" disabled>Download .txt</button></div></div>
+          <div class="transcript" data-out="transcript"><p class="muted">Not transcribed yet.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Ask -->
+    <section class="ask" id="ask" aria-labelledby="ask-title">
+      <div class="section-head">
+        <div>
+          <h2 class="section-title" id="ask-title">Ask the transcript</h2>
+          <p class="section-desc">Each question retrieves the 4 most similar transcript chunks and sends them, with the question, to the LLM. The answer is shown next to the passages it was given.</p>
+        </div>
+      </div>
+      <form class="ask-form" id="ask-form" novalidate>
+        <label class="sr-only" for="question">Question</label>
+        <input class="input input-lg" id="question" placeholder="Ask something about what was said…" maxlength="1000" disabled aria-describedby="ask-error">
+        <button class="btn btn-primary btn-lg" type="submit" id="ask-btn" disabled><span class="spinner" aria-hidden="true"></span><span class="btn-label">Ask</span></button>
+      </form>
+      <span class="field-error" id="ask-error" role="alert"></span>
+      <div id="qa-list" class="qa-list" aria-live="polite">
+        <div class="empty-state"><strong>Questions unlock after indexing</strong><span>Analyse a video first. Answers are restricted to the transcript; the model is told to say when the information is not there.</span></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Method -->
+  <section class="section method" id="method" aria-labelledby="method-title">
+    <div class="container wide">
+      <div class="section-head"><h2 class="section-title" id="method-title">How it works</h2></div>
+      <div class="method-grid">
+        <ol class="rag-flow" aria-label="Retrieval-augmented generation pipeline">
+          <li><b>Transcript</b><span>full text from Whisper (<code>WHISPER_MODEL</code>, default <code>small</code>) or Sarvam <code>saaras:v2.5</code></span></li>
+          <li><b>Chunk</b><span><code>RecursiveCharacterTextSplitter</code>, 500 characters, 50 overlap</span></li>
+          <li><b>Embed</b><span><code>all-MiniLM-L6-v2</code> sentence embeddings, CPU</span></li>
+          <li><b>Store</b><span>Chroma, persisted in <code>vector_db/</code>, collection <code>meeting_transcript</code> (cleared before each new video)</span></li>
+          <li><b>Retrieve</b><span>similarity search, top <i>k</i> = 4 chunks</span></li>
+          <li><b>Generate</b><span><code class="llm-model">mistral-small-latest</code> (set by <code>MISTRAL_MODEL</code>), T = 0.3, prompted to answer only from the retrieved context</span></li>
+        </ol>
+        <div class="stack">
+          <div class="panel"><div class="panel-body stack-sm">
+            <h3 class="panel-title">Analysis outputs</h3>
+            <p class="muted small">The summary is map-reduce: 3,000-character chunks (200 overlap) are summarised separately, then combined into bullet points. The title uses only the first 2,000 characters. Action items, decisions and open questions each send the full transcript in a single prompt.</p>
+          </div></div>
+          <div class="panel"><div class="panel-body stack-sm">
+            <h3 class="panel-title">Limitations</h3>
+            <ul class="notes">
+              <li><strong>No timestamps or speakers.</strong> Only plain text is kept from transcription, so answers cannot point to a moment in the video.</li>
+              <li><strong>One index at a time.</strong> Analysing a new video replaces the previous index, so questions always refer to the most recent video. Any retrieved passage not found in the current transcript would be flagged in red.</li>
+              <li><strong>Long recordings.</strong> Extraction prompts include the whole transcript and may exceed the model's context window.</li>
+              <li><strong>LLM outputs can be wrong.</strong> Summaries and extracted items are generated text; check them against the transcript.</li>
+              <li><strong>Speech only.</strong> On-screen text, slides and visuals are not analysed.</li>
+            </ul>
+          </div></div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="app-footer">
+  <div class="container wide">
+    <p>Portfolio project by Ansh Agrawal, built from a YouTube tutorial and extended with a web studio (replacing the original Streamlit UI), display of the retrieved evidence behind each answer, a fix for cross-video retrieval contamination and documented limitations. Not affiliated with, sponsored by or endorsed by any university or research institute. Only analyse media you have the right to use.</p>
+    <p class="mono">Whisper · LangChain · Mistral · Chroma · FastAPI</p>
+  </div>
+</footer>
+
+<script src="/js/core.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>

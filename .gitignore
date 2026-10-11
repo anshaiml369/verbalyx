@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+# runtime data created by the pipeline
+downloades/
+vector_db/

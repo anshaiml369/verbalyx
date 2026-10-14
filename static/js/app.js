@@ -20,6 +20,11 @@
       state.maxMb = h.max_upload_mb;
       $("#max-mb").textContent = h.max_upload_mb;
       if (h.mistral_model) $$(".llm-model").forEach((n) => { n.textContent = h.mistral_model; });
+      if (h.youtube_enabled === false) {
+        const yt = document.querySelector('[data-source="url"]');
+        if (yt) { yt.disabled = true; yt.title = "YouTube links are disabled on this public demo; upload a file instead."; }
+        setSource("file");
+      }
       const item = (ok, label, note, optional) => el("li", {}, [
         el("span", { class: `req-icon ${ok ? "ok" : optional ? "opt" : "bad"}`, "aria-hidden": "true", text: ok ? "✓" : optional ? "–" : "✕" }),
         el("span", {}, [el("span", { class: "sr-only", text: ok ? "Available: " : "Missing: " }), label, el("span", { class: "req-note", text: note })]),
@@ -130,7 +135,7 @@
       follow(job);
     } catch (err) {
       setBusy(btn, false);
-      const titles = { 503: "Server is not ready", 429: "Another video is processing", 413: "File too large", 415: "Unsupported file type", 422: "Invalid input" };
+      const titles = { 503: "Server is not ready", 429: /being processed/i.test(err.message) ? "Another video is processing" : "Usage limit reached", 413: "File too large", 415: "Unsupported file type", 422: "Invalid input" };
       $("#source-alert").replaceChildren(callout(err.status === 429 ? "warn" : "err", titles[err.status] || "Could not start the analysis", [err.message]));
     }
   }

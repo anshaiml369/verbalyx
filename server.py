@@ -23,13 +23,14 @@ import threading
 import time
 import traceback
 import uuid
+from collections import deque
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
 load_dotenv()  # must run before core/ is imported: transcriber reads env vars at import time
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile  # noqa: E402
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile  # noqa: E402
 from fastapi.responses import FileResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
@@ -42,6 +43,15 @@ ALLOWED_EXT = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".mp3", ".wav", 
 YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "www.youtu.be"}
 LANGUAGES = {"english", "hinglish"}
 STAGES = ["audio", "transcript", "title", "summary", "extract", "rag"]
+
+# Limits for a public deployment: each analysis and each question makes paid Mistral calls, and
+# transcription is CPU-heavy. 0 means "no limit", so local use is unchanged unless these are set.
+JOBS_PER_DAY = int(os.getenv("JOBS_PER_DAY", "0"))
+JOBS_PER_IP_PER_HOUR = int(os.getenv("JOBS_PER_IP_PER_HOUR", "0"))
+QUESTIONS_PER_JOB = int(os.getenv("QUESTIONS_PER_JOB", "0"))
+MAX_AUDIO_MINUTES = float(os.getenv("MAX_AUDIO_MINUTES", "0"))
+# YouTube often blocks downloads from cloud servers; a public deployment can accept uploads only.
+ALLOW_YOUTUBE = os.getenv("ALLOW_YOUTUBE", "1") == "1"
 
 
 class _ThreadStdout(io.TextIOBase):
@@ -69,6 +79,50 @@ sys.stdout = _stdout
 
 JOBS = {}
 JOBS_LOCK = threading.Lock()
+_JOB_STARTS = deque()   # start times of accepted analyses in the last 24 h
+_CLIENT_STARTS = {}     # client address -> start times of its analyses in the last hour
+
+
+def _client_id(request):
+    """Best-effort client address: a proxy-supplied header when present, else the socket peer."""
+    for header in ("true-client-ip", "cf-connecting-ip"):
+        if request.headers.get(header):
+            return request.headers[header].strip()
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _usage_left(client, now):
+    """Drop expired entries; return (analyses left today, left this hour for client), None = unlimited. Hold JOBS_LOCK."""
+    while _JOB_STARTS and now - _JOB_STARTS[0] >= 86400:
+        _JOB_STARTS.popleft()
+    for key in list(_CLIENT_STARTS):
+        starts = _CLIENT_STARTS[key]
+        while starts and now - starts[0] >= 3600:
+            starts.popleft()
+        if not starts:
+            del _CLIENT_STARTS[key]
+    day = JOBS_PER_DAY - len(_JOB_STARTS) if JOBS_PER_DAY else None
+    hour = JOBS_PER_IP_PER_HOUR - len(_CLIENT_STARTS.get(client, ())) if JOBS_PER_IP_PER_HOUR else None
+    return day, hour
+
+
+def _minutes(seconds):
+    m = max(1, round(seconds / 60))
+    return f"{m} minute{'s' if m != 1 else ''}" if m < 120 else f"{round(m / 60)} hours"
+
+
+def _media_seconds(path):
+    """Duration of an uploaded file via ffprobe, or None if it cannot be read."""
+    import subprocess
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+                             capture_output=True, text=True, timeout=60).stdout.strip()
+        return float(out)
+    except Exception:
+        return None
 
 
 def _redact(text):
@@ -87,6 +141,8 @@ def _requirements():
         "whisper_model": os.getenv("WHISPER_MODEL", "small"),
         "mistral_model": os.getenv("MISTRAL_MODEL", "mistral-small-latest"),
         "max_upload_mb": MAX_UPLOAD_MB,
+        "youtube_enabled": ALLOW_YOUTUBE,
+        "max_audio_minutes": MAX_AUDIO_MINUTES or None,
     }
 
 
@@ -192,18 +248,25 @@ app = FastAPI(title="Verbalyx API", description="Transcription, LLM analysis and
 
 
 @app.get("/api/health")
-def health():
+def health(request: Request):
     req = _requirements()
+    with JOBS_LOCK:
+        day_left, hour_left = _usage_left(_client_id(request), time.time())
     return {
         "status": "ok",
         **req,
         "ready": req["mistral_key"] and req["ffmpeg"],
         "active_jobs": sum(1 for j in JOBS.values() if j["status"] in ("queued", "running")),
+        "limits": {"analyses_per_day": JOBS_PER_DAY or None, "analyses_per_client_per_hour": JOBS_PER_IP_PER_HOUR or None,
+                   "questions_per_analysis": QUESTIONS_PER_JOB or None,
+                   "analyses_left_today": None if day_left is None else max(0, day_left),
+                   "your_analyses_left_this_hour": None if hour_left is None else max(0, hour_left)},
     }
 
 
 @app.post("/api/jobs", status_code=202)
 async def create_job(
+    request: Request,
     source_type: str = Form(...),
     language: str = Form("english"),
     url: str = Form(None),
@@ -223,9 +286,21 @@ async def create_job(
     if missing:
         raise HTTPException(503, {"message": "The server is not ready: " + "; ".join(missing) + ".", "missing": missing})
 
+    if source_type == "url" and not ALLOW_YOUTUBE:
+        raise HTTPException(422, "YouTube links are disabled on this public demo (YouTube often blocks cloud servers). "
+                                 "Upload an audio or video file instead.")
+    client = _client_id(request)
     with JOBS_LOCK:
         if any(j["status"] in ("queued", "running") for j in JOBS.values()):
             raise HTTPException(429, "Another video is being processed. Wait for it to finish, then try again.")
+        now = time.time()
+        day_left, hour_left = _usage_left(client, now)
+        if day_left is not None and day_left <= 0:
+            raise HTTPException(429, f"The demo's limit of {JOBS_PER_DAY} analyses per day has been reached (each one makes "
+                                     f"paid API calls). Try again in about {_minutes(86400 - (now - _JOB_STARTS[0]))}.")
+        if hour_left is not None and hour_left <= 0:
+            raise HTTPException(429, f"You have started {JOBS_PER_IP_PER_HOUR} analyses in the last hour. Try again in about "
+                                     f"{_minutes(3600 - (now - _CLIENT_STARTS[client][0]))}.")
 
     job_id = uuid.uuid4().hex[:12]
     upload_dir = None
@@ -263,12 +338,24 @@ async def create_job(
         if size == 0:
             shutil.rmtree(upload_dir, ignore_errors=True)
             raise HTTPException(422, "The uploaded file is empty.")
+        if MAX_AUDIO_MINUTES:
+            seconds = _media_seconds(dest)
+            if seconds is None:
+                shutil.rmtree(upload_dir, ignore_errors=True)
+                raise HTTPException(422, "Could not read the length of that file. Upload a standard audio or video file.")
+            if seconds > MAX_AUDIO_MINUTES * 60:
+                shutil.rmtree(upload_dir, ignore_errors=True)
+                raise HTTPException(413, f"That recording is {seconds / 60:.1f} minutes long; this demo accepts up to "
+                                         f"{MAX_AUDIO_MINUTES:g} minutes.")
         source = dest
         source_meta.update(filename=os.path.basename(file.filename)[:200], size_bytes=size)
     else:
         raise HTTPException(422, "source_type must be 'url' or 'file'.")
 
     with JOBS_LOCK:
+        now = time.time()
+        _JOB_STARTS.append(now)
+        _CLIENT_STARTS.setdefault(client, deque()).append(now)
         JOBS[job_id] = {
             "id": job_id,
             "status": "queued",
@@ -315,6 +402,8 @@ def ask(job_id: str, q: Question):
     from core.rag_engine import ask_question
 
     question = " ".join(q.question.split())
+    if QUESTIONS_PER_JOB and len(job["qa"]) >= QUESTIONS_PER_JOB:
+        raise HTTPException(429, f"This demo allows {QUESTIONS_PER_JOB} questions per analysis (each one makes a paid API call).")
     with job["_ask_lock"]:
         started = time.time()
         try:
